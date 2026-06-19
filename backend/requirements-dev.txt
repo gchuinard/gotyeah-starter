@@ -1,5 +1,2 @@
 -r requirements.txt
 pytest==9.1.1
-# Starlette >=1.3 utilise httpx2 pour son TestClient (httpx classique = déprécié).
-# Test-only : le runtime de l'app continue d'utiliser httpx (cf. requirements.txt).
-httpx2==2.4.0

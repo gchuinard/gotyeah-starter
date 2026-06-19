@@ -4,7 +4,7 @@ from __future__ import annotations
 import asyncio
 import base64
 
-import httpx
+import httpx2
 
 API = "https://api.github.com"
 
@@ -18,7 +18,7 @@ class GitHubClient:
         if not token or not owner:
             raise GitHubError("GITHUB_TOKEN / GITHUB_OWNER manquants")
         self.owner = owner
-        self._client = httpx.AsyncClient(
+        self._client = httpx2.AsyncClient(
             base_url=API,
             timeout=30.0,
             headers={
@@ -31,7 +31,7 @@ class GitHubClient:
     async def aclose(self) -> None:
         await self._client.aclose()
 
-    async def _check(self, resp: httpx.Response, action: str) -> dict:
+    async def _check(self, resp: httpx2.Response, action: str) -> dict:
         if resp.status_code >= 300:
             raise GitHubError(f"{action} a échoué ({resp.status_code}): {resp.text}")
         return resp.json() if resp.content else {}
@@ -65,7 +65,7 @@ class GitHubClient:
         """
         b64 = base64.b64encode(content.encode("utf-8")).decode("ascii")
         delays = (0, 2, 4, 6)
-        last: httpx.Response | None = None
+        last: httpx2.Response | None = None
         for delay in delays:
             if delay:
                 await asyncio.sleep(delay)

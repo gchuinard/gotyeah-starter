@@ -1,7 +1,7 @@
 """Client Cloudflare : résolution de zone + gestion du record DNS A."""
 from __future__ import annotations
 
-import httpx
+import httpx2
 
 API = "https://api.cloudflare.com/client/v4"
 
@@ -15,7 +15,7 @@ class CloudflareClient:
         if not token:
             raise CloudflareError("CLOUDFLARE_TOKEN manquant")
         self._zone_id = zone_id
-        self._client = httpx.AsyncClient(
+        self._client = httpx2.AsyncClient(
             base_url=API,
             timeout=30.0,
             headers={
@@ -27,7 +27,7 @@ class CloudflareClient:
     async def aclose(self) -> None:
         await self._client.aclose()
 
-    async def _result(self, resp: httpx.Response, action: str):
+    async def _result(self, resp: httpx2.Response, action: str):
         data = resp.json() if resp.content else {}
         if resp.status_code >= 300 or not data.get("success", False):
             errs = data.get("errors") if isinstance(data, dict) else resp.text

@@ -11,7 +11,7 @@ from __future__ import annotations
 import asyncio
 from typing import Awaitable, Callable
 
-import httpx
+import httpx2
 
 
 class NPMError(RuntimeError):
@@ -25,12 +25,12 @@ class NPMClient:
         self._email = email
         self._password = password
         # La demande de cert Let's Encrypt peut être longue.
-        self._client = httpx.AsyncClient(base_url=base_url.rstrip("/"), timeout=180.0)
+        self._client = httpx2.AsyncClient(base_url=base_url.rstrip("/"), timeout=180.0)
 
     async def aclose(self) -> None:
         await self._client.aclose()
 
-    async def _check(self, resp: httpx.Response, action: str) -> dict:
+    async def _check(self, resp: httpx2.Response, action: str) -> dict:
         if resp.status_code >= 300:
             raise NPMError(f"{action} a échoué ({resp.status_code}): {resp.text}")
         return resp.json() if resp.content else {}
