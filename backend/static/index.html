@@ -79,6 +79,37 @@
       <button id="submit" type="submit">Provisionner</button>
     </form>
 
+    <details class="card help">
+      <summary>📋 Pré-requis &amp; conventions — à copier pour chaque nouveau projet</summary>
+      <button type="button" id="copy-setup" class="copy-btn">Copier</button>
+      <pre id="setup-prompt"># Nouveau projet GotYeah — pré-requis &amp; conventions
+
+## Tokens (dans le .env de gotyeah-starter sur le Pi : ~/sites/gotyeah-starter/.env)
+- GITHUB_TOKEN : PAT classique, scopes OBLIGATOIRES :
+    repo, delete_repo, workflow
+  (sans `workflow`, l'injection de .github/workflows/deploy.yml échoue en 404)
+- CLOUDFLARE_TOKEN : API Token "Custom", permissions :
+    Zone -> DNS  -> Edit
+    Zone -> Zone -> Read
+  Zone Resources : Include -> Specific zone -> gautierchuinard.com
+  NE PAS mettre de filtrage IP (le Pi sort en IPv6, ça casse le token).
+- NPM_EMAIL / NPM_PASSWORD : compte admin Nginx Proxy Manager.
+- CLOUDFLARE_ZONE_ID est déjà renseigné (token sans Zone:Read marcherait aussi).
+
+## Conventions de provisioning (déjà gérées par l'app)
+- Record DNS créé en PROXIED (orange). Le cert Let's Encrypt s'émet via NPM
+  À TRAVERS le proxy Cloudflare (le port 80 direct n'est pas ouvert sur le Pi).
+- NPM forwarde par NOM DE CONTENEUR sur le réseau nginx-proxy-manager_default.
+- Backend = sous-domaine api-<front> + son propre conteneur + port.
+- deploy.yml (runner self-hosted) : build le front depuis "." et le back depuis
+  "./backend", relance les conteneurs sur le réseau npm.
+
+## Remplir le formulaire
+- Repo GitHub + Type de site
+- Frontend : domaine (ex: monsite.gautierchuinard.com), conteneur (ex: monsite), port
+- Si backend : domaine api-monsite.gautierchuinard.com, conteneur monsite-api, port</pre>
+    </details>
+
     <section class="card logs-card">
       <div class="logs-head">
         <h2>Logs</h2>

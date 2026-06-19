@@ -138,4 +138,26 @@ form.addEventListener("submit", async (e) => {
   }
 });
 
+// Copie du mémo de pré-requis dans le presse-papier.
+const copyBtn = document.getElementById("copy-setup");
+if (copyBtn) {
+  copyBtn.addEventListener("click", async () => {
+    const text = document.getElementById("setup-prompt").textContent;
+    try {
+      await navigator.clipboard.writeText(text);
+      copyBtn.textContent = "Copié ✓";
+    } catch (_) {
+      // Fallback si l'API clipboard est indisponible (http, vieux navigateur).
+      const r = document.createRange();
+      r.selectNodeContents(document.getElementById("setup-prompt"));
+      const sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(r);
+      document.execCommand("copy");
+      copyBtn.textContent = "Copié ✓";
+    }
+    setTimeout(() => (copyBtn.textContent = "Copier"), 2000);
+  });
+}
+
 loadHealth();
