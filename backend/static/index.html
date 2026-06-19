@@ -48,9 +48,10 @@
         </div>
       </fieldset>
 
-      <label class="checkbox">
+      <label class="toggle">
         <input id="has_backend" name="has_backend" type="checkbox" />
-        Ce site a un backend
+        <span class="slider"></span>
+        <span>Ce site a un backend</span>
       </label>
 
       <fieldset id="backend_fields" hidden>
@@ -71,9 +72,10 @@
         </div>
       </fieldset>
 
-      <label class="checkbox">
+      <label class="toggle">
         <input name="private" type="checkbox" checked />
-        Repo privé
+        <span class="slider"></span>
+        <span>Repo privé</span>
       </label>
 
       <button id="submit" type="submit">Provisionner</button>
