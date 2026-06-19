@@ -1,0 +1,70 @@
+name: Deploy to Pi
+
+# À chaque push sur main : tests (job "test") puis déploiement (job "deploy") si les
+# tests passent. Le runner GitHub synchronise le code sur le Pi via rsync/SSH, puis
+# (re)construit le conteneur. Le .env (secrets) reste sur le Pi — il est exclu du rsync.
+#
+# Secrets requis (Settings > Secrets and variables > Actions) :
+#   SSH_HOST  hôte/IP du Pi joignable en SSH depuis Internet
+#   SSH_USER  utilisateur Linux sur le Pi (pi)
+#   SSH_KEY   clé PRIVÉE de déploiement (contenu complet, lignes BEGIN/END incluses)
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-gotyeah-starter
+  cancel-in-progress: true
+
+env:
+  REMOTE_DIR: /home/pi/sites/gotyeah-starter
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Dépendances
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+      - name: Tests
+        run: pytest -q
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Préparer la clé SSH
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -p 22 -H "${{ secrets.SSH_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Synchroniser le code sur le Pi (le .env du Pi est préservé)
+        run: |
+          rsync -az --delete \
+            --exclude='.git' \
+            --exclude='.env' \
+            --exclude='__pycache__' \
+            --rsync-path="mkdir -p ${REMOTE_DIR} && rsync" \
+            -e "ssh -i ~/.ssh/id_ed25519 -p 22 -o StrictHostKeyChecking=yes" \
+            ./ "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:${REMOTE_DIR}/"
+
+      - name: Construire et relancer le conteneur
+        run: |
+          ssh -i ~/.ssh/id_ed25519 -p 22 -o StrictHostKeyChecking=yes \
+            "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
+            "set -e; cd ${REMOTE_DIR}; docker compose up -d --build; docker image prune -f"
