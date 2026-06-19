@@ -67,4 +67,4 @@ jobs:
         run: |
           ssh -i ~/.ssh/id_ed25519 -p 22 -o StrictHostKeyChecking=yes \
             "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
-            "set -e; cd ${REMOTE_DIR}; docker compose up -d --build; docker image prune -f"
+            "set -e; cd ${REMOTE_DIR}; docker compose up -d --build --wait --wait-timeout 120; docker image prune -f"
