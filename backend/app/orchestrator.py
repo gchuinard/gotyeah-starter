@@ -126,7 +126,8 @@ class Orchestrator:
                 level="step", step=step,
             )
             host_id, cert_id = await npm.create_proxy_host_with_cert(
-                ep.domain, ep.container, ep.port, settings.npm_forward_scheme, le_email
+                ep.domain, ep.container, ep.port, settings.npm_forward_scheme, le_email,
+                on_log=lambda m, st=step: self._log(m, level="info", step=st),
             )
             self._register_undo(f"proxy host NPM #{host_id} ({ep.domain})",
                                 lambda hid=host_id: npm.delete_proxy_host(hid))

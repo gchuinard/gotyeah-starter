@@ -8,6 +8,9 @@ conf custom globale de NPM).
 """
 from __future__ import annotations
 
+import asyncio
+from typing import Awaitable, Callable
+
 import httpx
 
 
@@ -60,6 +63,10 @@ class NPMClient:
             "locations": [],
         }
 
+    # Délais (s) avant chaque tentative d'émission du cert. Le 1er est immédiat ;
+    # les suivants laissent le temps à Cloudflare d'activer un record fraîchement créé.
+    _CERT_RETRY_DELAYS = (0, 12, 20)
+
     async def create_proxy_host_with_cert(
         self,
         domain: str,
@@ -67,8 +74,13 @@ class NPMClient:
         forward_port: int,
         forward_scheme: str,
         le_email: str,
+        on_log: Callable[[str], Awaitable[None]] | None = None,
     ) -> tuple[int, int]:
-        """Crée le proxy host puis fait émettre un cert Let's Encrypt. Renvoie (host_id, cert_id)."""
+        """Crée le proxy host puis fait émettre un cert Let's Encrypt. Renvoie (host_id, cert_id).
+
+        Atomique : si l'émission du cert échoue après tous les essais, le host créé est
+        supprimé avant de propager l'erreur (pas de host orphelin).
+        """
         # 1) host sans SSL
         body = self._proxy_payload(domain, forward_host, forward_port, forward_scheme)
         body |= {"certificate_id": 0, "ssl_forced": False,
@@ -77,20 +89,36 @@ class NPMClient:
         host = await self._check(resp, f"Création du proxy host {domain}")
         host_id = int(host["id"])
 
-        # 2) demande du certificat via mise à jour (certificate_id="new")
+        # 2) demande du certificat via mise à jour (certificate_id="new"), avec retries
         upd = self._proxy_payload(domain, forward_host, forward_port, forward_scheme)
         upd |= {
             "certificate_id": "new",
             "ssl_forced": True,
             "meta": {"letsencrypt_email": le_email, "letsencrypt_agree": True, "dns_challenge": False},
         }
-        resp = await self._client.put(f"/api/nginx/proxy-hosts/{host_id}", json=upd)
-        data = await self._check(resp, f"Émission du certificat pour {domain}")
-        meta = data.get("meta") or {}
-        if meta.get("nginx_online") is False:
-            raise NPMError(f"NGINX a rejeté la conf de {domain} : {meta.get('nginx_err')}")
-        cert_id = int(data.get("certificate_id") or 0)
-        return host_id, cert_id
+        last_err: Exception | None = None
+        for attempt, delay in enumerate(self._CERT_RETRY_DELAYS, start=1):
+            if delay:
+                if on_log:
+                    await on_log(f"… cert {domain} : nouvel essai dans {delay}s (essai {attempt})")
+                await asyncio.sleep(delay)
+            try:
+                resp = await self._client.put(f"/api/nginx/proxy-hosts/{host_id}", json=upd)
+                data = await self._check(resp, f"Émission du certificat pour {domain}")
+                meta = data.get("meta") or {}
+                if meta.get("nginx_online") is False:
+                    raise NPMError(f"NGINX a rejeté la conf de {domain} : {meta.get('nginx_err')}")
+                return host_id, int(data.get("certificate_id") or 0)
+            except NPMError as exc:
+                last_err = exc
+
+        # tous les essais ont échoué : on retire le host pour ne rien laisser traîner
+        try:
+            await self.delete_proxy_host(host_id)
+        except Exception:  # noqa: BLE001
+            pass
+        raise NPMError(f"Émission du certificat pour {domain} échouée après "
+                       f"{len(self._CERT_RETRY_DELAYS)} essais : {last_err}")
 
     async def delete_proxy_host(self, host_id: int) -> None:
         resp = await self._client.delete(f"/api/nginx/proxy-hosts/{host_id}")
