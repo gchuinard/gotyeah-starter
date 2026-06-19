@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>gotyeah-starter</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <main class="wrap">
+    <header>
+      <h1>gotyeah-starter</h1>
+      <p class="sub">Provisionne un nouveau site : GitHub → Cloudflare → NPM → CI/CD</p>
+      <div id="health" class="health"></div>
+    </header>
+
+    <form id="form" class="card">
+      <label>
+        Nom de domaine
+        <input name="domain" type="text" placeholder="app.exemple.com" required />
+      </label>
+
+      <label>
+        Type de site
+        <select name="site_type" required>
+          <option value="nextjs">Next.js</option>
+          <option value="static">Statique</option>
+          <option value="other">Autre</option>
+        </select>
+      </label>
+
+      <label>
+        Port local cible
+        <input name="target_port" type="number" min="1" max="65535" placeholder="3000" required />
+      </label>
+
+      <label>
+        Nom du repo GitHub
+        <input name="repo_name" type="text" placeholder="mon-site" required />
+      </label>
+
+      <label class="checkbox">
+        <input name="private" type="checkbox" checked />
+        Repo privé
+      </label>
+
+      <button id="submit" type="submit">Provisionner</button>
+    </form>
+
+    <section class="card logs-card">
+      <div class="logs-head">
+        <h2>Logs</h2>
+        <span id="status" class="status idle">en attente</span>
+      </div>
+      <ol id="logs" class="logs"></ol>
+    </section>
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
