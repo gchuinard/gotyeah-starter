@@ -4,19 +4,18 @@ services:
     container_name: gotyeah-starter
     restart: unless-stopped
     env_file: .env
-    ports:
-      # Exposé pour que Nginx Proxy Manager le reverse-proxe (ex: pi-ip:8080).
-      - "8080:8080"
-    # Par défaut l'app joint NPM, Cloudflare et GitHub par le réseau de l'hôte.
-    # NPM_BASE_URL pointe sur http://<ip-du-pi>:81 (cf. .env).
+    networks:
+      - default
+      - npm
+    # Pas de publication de port hôte : NPM joint le conteneur via le réseau
+    # partagé et le proxifie par son nom (gotyeah-starter:8080).
 
-    # --- Alternative : résolution par nom de conteneur ----------------------
-    # Si vous préférez que l'app joigne NPM via son nom de conteneur, décommentez
-    # le bloc networks ci-dessous et mettez NPM_BASE_URL=http://nginx-proxy-manager:81.
-    # networks:
-    #   - npm
-
-# networks:
-#   npm:
-#     external: true
-#     name: npm   # nom du réseau Docker créé par le compose de Nginx Proxy Manager
+networks:
+  # Réseau par défaut du projet (gotyeah-starter_default), créé automatiquement.
+  default:
+  # Réseau partagé avec Nginx Proxy Manager (c'est SON réseau, NPM y est connecté
+  # en permanence). Externe => doit préexister, géré par la stack NPM. Permet à
+  # NPM de résoudre « gotyeah-starter » sans connexion manuelle.
+  npm:
+    external: true
+    name: nginx-proxy-manager_default
