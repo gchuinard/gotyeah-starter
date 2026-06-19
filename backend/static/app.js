@@ -3,6 +3,8 @@ const submitBtn = document.getElementById("submit");
 const logsEl = document.getElementById("logs");
 const statusEl = document.getElementById("status");
 const healthEl = document.getElementById("health");
+const hasBackend = document.getElementById("has_backend");
+const backendFields = document.getElementById("backend_fields");
 
 let source = null;
 
@@ -44,6 +46,26 @@ async function loadHealth() {
   }
 }
 
+// Affiche/masque la section backend et (dé)active ses champs requis.
+function toggleBackend() {
+  const on = hasBackend.checked;
+  backendFields.hidden = !on;
+  for (const n of ["be_domain", "be_container", "be_port"]) {
+    form.elements[n].required = on;
+    if (!on) form.elements[n].value = "";
+  }
+  // Suggère api-<frontend> si le domaine backend est vide.
+  if (on && !form.elements.be_domain.value && form.elements.fe_domain.value) {
+    form.elements.be_domain.value = "api-" + form.elements.fe_domain.value.trim();
+  }
+}
+hasBackend.addEventListener("change", toggleBackend);
+form.elements.fe_domain.addEventListener("blur", () => {
+  if (hasBackend.checked && !form.elements.be_domain.value && form.elements.fe_domain.value) {
+    form.elements.be_domain.value = "api-" + form.elements.fe_domain.value.trim();
+  }
+});
+
 function listen(jobId) {
   if (source) source.close();
   source = new EventSource(`/api/jobs/${jobId}/events`);
@@ -57,8 +79,6 @@ function listen(jobId) {
     }
   };
   source.onerror = () => {
-    // Le serveur ferme le flux à la fin du job ; on ne réactive le bouton
-    // que si aucun statut final n'a été reçu.
     if (!statusEl.classList.contains("ok") && !statusEl.classList.contains("err")) {
       addLog({ level: "error", message: "Connexion au flux de logs perdue." });
       setStatus("déconnecté", "err");
@@ -76,11 +96,21 @@ form.addEventListener("submit", async (e) => {
 
   const fd = new FormData(form);
   const payload = {
-    domain: fd.get("domain").trim(),
-    site_type: fd.get("site_type"),
-    target_port: Number(fd.get("target_port")),
     repo_name: fd.get("repo_name").trim(),
+    site_type: fd.get("site_type"),
     private: fd.get("private") === "on",
+    frontend: {
+      domain: fd.get("fe_domain").trim(),
+      container: fd.get("fe_container").trim(),
+      port: Number(fd.get("fe_port")),
+    },
+    backend: hasBackend.checked
+      ? {
+          domain: fd.get("be_domain").trim(),
+          container: fd.get("be_container").trim(),
+          port: Number(fd.get("be_port")),
+        }
+      : null,
   };
 
   try {

@@ -1,4 +1,11 @@
-"""Client Nginx Proxy Manager (API port 81) : auth JWT, certificat Let's Encrypt, proxy host."""
+"""Client Nginx Proxy Manager (API port 81) : auth JWT + proxy host avec cert Let's Encrypt.
+
+Note : sur certaines versions de NPM, POST /api/nginx/certificates échoue (validation de
+schéma renvoyée en « Permission Denied »). La voie fiable, utilisée ici, reproduit l'UI :
+créer le proxy host sans SSL, puis le mettre à jour avec certificate_id="new" pour que NPM
+émette le certificat et l'attache. On laisse advanced_config vide (le SSE est géré par la
+conf custom globale de NPM).
+"""
 from __future__ import annotations
 
 import httpx
@@ -15,7 +22,7 @@ class NPMClient:
         self._email = email
         self._password = password
         # La demande de cert Let's Encrypt peut être longue.
-        self._client = httpx.AsyncClient(base_url=base_url.rstrip("/"), timeout=120.0)
+        self._client = httpx.AsyncClient(base_url=base_url.rstrip("/"), timeout=180.0)
 
     async def aclose(self) -> None:
         await self._client.aclose()
@@ -35,53 +42,55 @@ class NPMClient:
             raise NPMError("NPM n'a pas renvoyé de token")
         self._client.headers["Authorization"] = f"Bearer {token}"
 
-    async def request_certificate(self, domain: str, le_email: str) -> int:
-        """Demande un certificat Let's Encrypt (challenge HTTP). Renvoie l'id."""
-        resp = await self._client.post(
-            "/api/nginx/certificates",
-            json={
-                "domain_names": [domain],
-                "provider": "letsencrypt",
-                "meta": {
-                    "letsencrypt_email": le_email,
-                    "letsencrypt_agree": True,
-                    "dns_challenge": False,
-                },
-            },
-        )
-        data = await self._check(resp, "Demande de certificat Let's Encrypt")
-        return int(data["id"])
+    def _proxy_payload(self, domain: str, forward_host: str, forward_port: int, forward_scheme: str) -> dict:
+        return {
+            "domain_names": [domain],
+            "forward_scheme": forward_scheme,
+            "forward_host": forward_host,
+            "forward_port": forward_port,
+            "block_exploits": True,
+            "allow_websocket_upgrade": True,
+            "caching_enabled": False,
+            "http2_support": True,
+            "hsts_enabled": True,
+            "hsts_subdomains": False,
+            "access_list_id": 0,
+            # Vide volontairement : la conf custom globale gère déjà le buffering/SSE.
+            "advanced_config": "",
+            "locations": [],
+        }
 
-    async def create_proxy_host(
+    async def create_proxy_host_with_cert(
         self,
         domain: str,
         forward_host: str,
         forward_port: int,
         forward_scheme: str,
-        certificate_id: int,
-    ) -> int:
-        resp = await self._client.post(
-            "/api/nginx/proxy-hosts",
-            json={
-                "domain_names": [domain],
-                "forward_scheme": forward_scheme,
-                "forward_host": forward_host,
-                "forward_port": forward_port,
-                "certificate_id": certificate_id,
-                "ssl_forced": True,
-                "http2_support": True,
-                "hsts_enabled": True,
-                "block_exploits": True,
-                "allow_websocket_upgrade": True,
-                "caching_enabled": False,
-                "access_list_id": 0,
-                "advanced_config": "",
-                "locations": [],
-                "meta": {"letsencrypt_agree": True, "dns_challenge": False},
-            },
-        )
-        data = await self._check(resp, "Création du proxy host")
-        return int(data["id"])
+        le_email: str,
+    ) -> tuple[int, int]:
+        """Crée le proxy host puis fait émettre un cert Let's Encrypt. Renvoie (host_id, cert_id)."""
+        # 1) host sans SSL
+        body = self._proxy_payload(domain, forward_host, forward_port, forward_scheme)
+        body |= {"certificate_id": 0, "ssl_forced": False,
+                 "meta": {"letsencrypt_agree": False, "dns_challenge": False}}
+        resp = await self._client.post("/api/nginx/proxy-hosts", json=body)
+        host = await self._check(resp, f"Création du proxy host {domain}")
+        host_id = int(host["id"])
+
+        # 2) demande du certificat via mise à jour (certificate_id="new")
+        upd = self._proxy_payload(domain, forward_host, forward_port, forward_scheme)
+        upd |= {
+            "certificate_id": "new",
+            "ssl_forced": True,
+            "meta": {"letsencrypt_email": le_email, "letsencrypt_agree": True, "dns_challenge": False},
+        }
+        resp = await self._client.put(f"/api/nginx/proxy-hosts/{host_id}", json=upd)
+        data = await self._check(resp, f"Émission du certificat pour {domain}")
+        meta = data.get("meta") or {}
+        if meta.get("nginx_online") is False:
+            raise NPMError(f"NGINX a rejeté la conf de {domain} : {meta.get('nginx_err')}")
+        cert_id = int(data.get("certificate_id") or 0)
+        return host_id, cert_id
 
     async def delete_proxy_host(self, host_id: int) -> None:
         resp = await self._client.delete(f"/api/nginx/proxy-hosts/{host_id}")
@@ -89,6 +98,8 @@ class NPMClient:
             raise NPMError(f"Suppression proxy host a échoué ({resp.status_code}): {resp.text}")
 
     async def delete_certificate(self, cert_id: int) -> None:
+        if not cert_id:
+            return
         resp = await self._client.delete(f"/api/nginx/certificates/{cert_id}")
         if resp.status_code not in (200, 404):
             raise NPMError(f"Suppression certificat a échoué ({resp.status_code}): {resp.text}")

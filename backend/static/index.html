@@ -15,29 +15,61 @@
     </header>
 
     <form id="form" class="card">
-      <label>
-        Nom de domaine
-        <input name="domain" type="text" placeholder="app.exemple.com" required />
+      <div class="row">
+        <label>
+          Nom du repo GitHub
+          <input name="repo_name" type="text" placeholder="mon-site" required />
+        </label>
+        <label>
+          Type de site
+          <select name="site_type" required>
+            <option value="nextjs">Next.js</option>
+            <option value="static">Statique</option>
+            <option value="other">Autre</option>
+          </select>
+        </label>
+      </div>
+
+      <fieldset>
+        <legend>Frontend</legend>
+        <label>
+          Domaine
+          <input name="fe_domain" type="text" placeholder="mon-site.gautierchuinard.com" required />
+        </label>
+        <div class="row">
+          <label>
+            Conteneur (forward host)
+            <input name="fe_container" type="text" placeholder="mon-site" required />
+          </label>
+          <label>
+            Port
+            <input name="fe_port" type="number" min="1" max="65535" placeholder="3000" required />
+          </label>
+        </div>
+      </fieldset>
+
+      <label class="checkbox">
+        <input id="has_backend" name="has_backend" type="checkbox" />
+        Ce site a un backend
       </label>
 
-      <label>
-        Type de site
-        <select name="site_type" required>
-          <option value="nextjs">Next.js</option>
-          <option value="static">Statique</option>
-          <option value="other">Autre</option>
-        </select>
-      </label>
-
-      <label>
-        Port local cible
-        <input name="target_port" type="number" min="1" max="65535" placeholder="3000" required />
-      </label>
-
-      <label>
-        Nom du repo GitHub
-        <input name="repo_name" type="text" placeholder="mon-site" required />
-      </label>
+      <fieldset id="backend_fields" hidden>
+        <legend>Backend</legend>
+        <label>
+          Domaine
+          <input name="be_domain" type="text" placeholder="api-mon-site.gautierchuinard.com" />
+        </label>
+        <div class="row">
+          <label>
+            Conteneur (forward host)
+            <input name="be_container" type="text" placeholder="mon-site-api" />
+          </label>
+          <label>
+            Port
+            <input name="be_port" type="number" min="1" max="65535" placeholder="8000" />
+          </label>
+        </div>
+      </fieldset>
 
       <label class="checkbox">
         <input name="private" type="checkbox" checked />

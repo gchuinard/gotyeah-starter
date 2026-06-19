@@ -1,7 +1,8 @@
-"""Orchestration en cascade des 4 étapes avec rollback compensatoire.
+"""Orchestration en cascade avec rollback compensatoire.
 
-Chaque étape exécutée enregistre une action de compensation (undo). En cas d'échec,
-on rejoue les compensations dans l'ordre inverse pour laisser le système propre.
+Pour chaque endpoint (frontend, puis backend si présent) : record DNS Cloudflare +
+proxy host NPM avec certificat Let's Encrypt. En cas d'échec, les compensations sont
+rejouées dans l'ordre inverse.
 """
 from __future__ import annotations
 
@@ -9,7 +10,7 @@ from typing import Awaitable, Callable
 
 from .config import settings
 from .events import bus
-from .models import LogEvent, ProvisionRequest
+from .models import Endpoint, LogEvent, ProvisionRequest
 from .services.cloudflare import CloudflareClient
 from .services.github import GitHubClient
 from .services.npm import NPMClient
@@ -21,14 +22,12 @@ class Orchestrator:
         self.job_id = job_id
         self.req = req
         self._undos: list[tuple[str, Callable[[], Awaitable[None]]]] = []
-        self._dns_record_id: str | None = None
+        # (label endpoint, record_id) pour le re-proxy final éventuel.
+        self._dns_records: list[tuple[str, str]] = []
 
     async def _log(self, message: str, level: str = "info", step: str | None = None, **data) -> None:
         await bus.publish(
-            LogEvent(
-                job_id=self.job_id, level=level, step=step, message=message,
-                data=data or None,
-            )
+            LogEvent(job_id=self.job_id, level=level, step=step, message=message, data=data or None)
         )
 
     def _register_undo(self, label: str, fn: Callable[[], Awaitable[None]]) -> None:
@@ -61,7 +60,7 @@ class Orchestrator:
             await bus.publish(
                 LogEvent(
                     job_id=self.job_id, level="success",
-                    message=f"✅ Site {self.req.domain} provisionné avec succès.",
+                    message=f"✅ {self.req.frontend.domain} provisionné avec succès.",
                     done=True, ok=True,
                 )
             )
@@ -96,88 +95,67 @@ class Orchestrator:
             lambda: gh.delete_repo(self.req.repo_name),
         )
         await self._log(
-            f"Repo créé : {repo.get('html_url', self.req.repo_name)}",
-            level="success", step=step,
+            f"Repo créé : {repo.get('html_url', self.req.repo_name)}", level="success", step=step
         )
 
     async def _step_cloudflare(self, cf: CloudflareClient) -> None:
         step = "cloudflare"
         if not settings.pi_public_ip:
             raise RuntimeError("PI_PUBLIC_IP non configurée")
-        # DNS-only pendant l'émission du cert si demandé, sinon directement l'état final.
         create_proxied = settings.cloudflare_proxied and not settings.cloudflare_dns_only_during_ssl
         mode = "proxied" if create_proxied else "DNS-only"
-        await self._log(
-            f"Ajout du record A {self.req.domain} → {settings.pi_public_ip} ({mode})…",
-            level="step", step=step,
-        )
-        record = await cf.create_a_record(
-            self.req.domain, settings.pi_public_ip, create_proxied
-        )
-        rec_id = record["id"]
-        self._dns_record_id = rec_id
-        self._register_undo(
-            f"record DNS {self.req.domain}", lambda: cf.delete_record(rec_id)
-        )
-        await self._log(f"Record DNS créé (id={rec_id}, {mode}).", level="success", step=step)
+        for label, ep in self.req.endpoints:
+            await self._log(
+                f"[{label}] record A {ep.domain} → {settings.pi_public_ip} ({mode})…",
+                level="step", step=step,
+            )
+            record = await cf.create_a_record(ep.domain, settings.pi_public_ip, create_proxied)
+            rec_id = record["id"]
+            self._dns_records.append((label, rec_id))
+            self._register_undo(f"record DNS {ep.domain}", lambda rid=rec_id: cf.delete_record(rid))
+            await self._log(f"[{label}] record créé (id={rec_id}).", level="success", step=step)
 
     async def _step_npm(self, npm: NPMClient) -> None:
         step = "npm"
         await self._log("Authentification sur Nginx Proxy Manager…", level="step", step=step)
         await npm.login()
-
-        await self._log(
-            f"Demande du certificat Let's Encrypt pour {self.req.domain} (peut prendre ~30s)…",
-            level="step", step=step,
-        )
-        cert_id = await npm.request_certificate(
-            self.req.domain, settings.letsencrypt_email or settings.npm_email
-        )
-        self._register_undo(f"certificat NPM #{cert_id}", lambda: npm.delete_certificate(cert_id))
-        await self._log(f"Certificat émis (id={cert_id}).", level="success", step=step)
-
-        await self._log(
-            f"Création du proxy host → {settings.forward_host}:{self.req.target_port}…",
-            level="step", step=step,
-        )
-        host_id = await npm.create_proxy_host(
-            self.req.domain,
-            settings.forward_host,
-            self.req.target_port,
-            settings.npm_forward_scheme,
-            cert_id,
-        )
-        self._register_undo(f"proxy host NPM #{host_id}", lambda: npm.delete_proxy_host(host_id))
-        await self._log(
-            f"Proxy host créé (id={host_id}) avec SSL forcé.", level="success", step=step
-        )
+        le_email = settings.letsencrypt_email or settings.npm_email
+        for label, ep in self.req.endpoints:
+            await self._log(
+                f"[{label}] proxy host {ep.domain} → {ep.container}:{ep.port} + cert Let's Encrypt…",
+                level="step", step=step,
+            )
+            host_id, cert_id = await npm.create_proxy_host_with_cert(
+                ep.domain, ep.container, ep.port, settings.npm_forward_scheme, le_email
+            )
+            self._register_undo(f"proxy host NPM #{host_id} ({ep.domain})",
+                                lambda hid=host_id: npm.delete_proxy_host(hid))
+            self._register_undo(f"certificat NPM #{cert_id} ({ep.domain})",
+                                lambda cid=cert_id: npm.delete_certificate(cid))
+            await self._log(
+                f"[{label}] proxy host #{host_id} créé, SSL forcé (cert #{cert_id}).",
+                level="success", step=step,
+            )
 
     async def _step_inject_workflow(self, gh: GitHubClient) -> None:
         step = "workflow"
         await self._log("Injection de .github/workflows/deploy.yml…", level="step", step=step)
-        content = render_deploy_workflow(
-            self.req.site_type, self.req.domain, self.req.target_port, self.req.repo_name
-        )
+        content = render_deploy_workflow(self.req)
         await gh.put_file(
-            self.req.repo_name,
-            ".github/workflows/deploy.yml",
-            content,
+            self.req.repo_name, ".github/workflows/deploy.yml", content,
             "ci: add deploy workflow (gotyeah-starter)",
         )
-        # Pas d'undo dédié : le rollback du repo entier suffit.
         await self._log("Workflow CI/CD injecté.", level="success", step=step)
 
     async def _step_reproxy(self, cf: CloudflareClient) -> None:
         step = "cloudflare"
-        # Rien à faire si on ne veut pas de proxy final, ou si le record a déjà été
-        # créé directement en proxied.
         if not (settings.cloudflare_proxied and settings.cloudflare_dns_only_during_ssl):
             return
-        if not self._dns_record_id:
-            return
-        await self._log(
-            f"NPM OK → bascule du record {self.req.domain} en proxied (orange cloud)…",
-            level="step", step=step,
-        )
-        await cf.set_proxied(self.req.domain, self._dns_record_id, True)
-        await self._log("Record repassé en proxied.", level="success", step=step)
+        for label, ep in self.req.endpoints:
+            rec_id = next((r for lbl, r in self._dns_records if lbl == label), None)
+            if not rec_id:
+                continue
+            await self._log(f"[{label}] bascule {ep.domain} en proxied (orange cloud)…",
+                            level="step", step=step)
+            await cf.set_proxied(ep.domain, rec_id, True)
+            await self._log(f"[{label}] record repassé en proxied.", level="success", step=step)

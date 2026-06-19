@@ -141,3 +141,21 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .logs li.error { color: var(--err); }
 .logs li.step { color: var(--step); font-weight: 600; }
 .logs .ts { color: var(--muted); margin-right: 0.6rem; }
+
+.row { display: flex; gap: 0.8rem; }
+.row > label { flex: 1; }
+
+fieldset {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1rem 1rem 0.4rem;
+  margin: 0 0 1rem;
+}
+fieldset legend {
+  padding: 0 0.4rem;
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--accent);
+}
+fieldset[hidden] { display: none; }
