@@ -1,6 +1,7 @@
 """Client GitHub : création de repo (depuis template ou vierge) et injection de fichiers."""
 from __future__ import annotations
 
+import asyncio
 import base64
 
 import httpx
@@ -57,18 +58,32 @@ class GitHubClient:
         return await self._check(resp, "Création du repo")
 
     async def put_file(self, repo: str, path: str, content: str, message: str) -> dict:
-        """Crée/écrase un fichier via l'API contents (base64)."""
+        """Crée/écrase un fichier via l'API contents (base64).
+
+        Juste après création d'un repo (auto_init), la branche par défaut peut ne pas
+        être encore disponible → l'API contents renvoie 404 fugacement. On réessaie.
+        """
         b64 = base64.b64encode(content.encode("utf-8")).decode("ascii")
-        # Si le fichier existe déjà (template), il faut son sha pour le mettre à jour.
-        sha: str | None = None
-        head = await self._client.get(f"/repos/{self.owner}/{repo}/contents/{path}")
-        if head.status_code == 200:
-            sha = head.json().get("sha")
-        body = {"message": message, "content": b64}
-        if sha:
-            body["sha"] = sha
-        resp = await self._client.put(f"/repos/{self.owner}/{repo}/contents/{path}", json=body)
-        return await self._check(resp, f"Injection de {path}")
+        delays = (0, 2, 4, 6)
+        last: httpx.Response | None = None
+        for delay in delays:
+            if delay:
+                await asyncio.sleep(delay)
+            # Si le fichier existe déjà (template), il faut son sha pour le mettre à jour.
+            sha: str | None = None
+            head = await self._client.get(f"/repos/{self.owner}/{repo}/contents/{path}")
+            if head.status_code == 200:
+                sha = head.json().get("sha")
+            body = {"message": message, "content": b64}
+            if sha:
+                body["sha"] = sha
+            resp = await self._client.put(f"/repos/{self.owner}/{repo}/contents/{path}", json=body)
+            if resp.status_code < 300:
+                return resp.json() if resp.content else {}
+            last = resp
+            if resp.status_code != 404:  # 404 = repo pas encore prêt → on retente
+                break
+        return await self._check(last, f"Injection de {path}")  # lève l'erreur finale
 
     async def delete_repo(self, repo: str) -> None:
         """Rollback : supprime le repo (nécessite le scope delete_repo)."""
