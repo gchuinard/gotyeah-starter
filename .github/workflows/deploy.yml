@@ -38,7 +38,17 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements-dev.txt
       - name: Tests
-        run: pytest -q
+        run: pytest -q --alluredir=allure-results
+
+      - name: Push Allure results
+        if: ${{ always() && github.ref == 'refs/heads/main' }}
+        uses: gchuinard/gotyeah-allure/actions/push-allure-results@main
+        with:
+          site: gotyeah-starter
+          results-dir: backend/allure-results
+          ssh-host: ${{ secrets.SSH_HOST }}
+          ssh-user: ${{ secrets.SSH_USER }}
+          ssh-key: ${{ secrets.SSH_KEY }}
 
   deploy:
     needs: test
