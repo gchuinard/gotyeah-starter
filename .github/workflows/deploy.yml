@@ -8,6 +8,7 @@ name: Deploy to Pi
 #   SSH_HOST  hôte/IP du Pi joignable en SSH depuis Internet
 #   SSH_USER  utilisateur Linux sur le Pi (pi)
 #   SSH_KEY   clé PRIVÉE de déploiement (contenu complet, lignes BEGIN/END incluses)
+#   SSH_KNOWN_HOSTS  clés d'hôte du Pi au format known_hosts, sous l'alias pi-gotyeah
 
 on:
   push:
@@ -42,39 +43,59 @@ jobs:
 
       - name: Push Allure results
         if: ${{ always() && github.ref == 'refs/heads/main' }}
-        uses: gchuinard/gotyeah-allure/actions/push-allure-results@main
+        # Action figée sur un commit précis et clés d'hôte du Pi passées par secret (24/09) :
+        # cette version refuse de pousser sans elles, au lieu de croire la première clé vue.
+        uses: gchuinard/gotyeah-allure/actions/push-allure-results@8df4d1f7f8dbc77ccc585c58b00b8cb7733c20fc
         with:
           site: gotyeah-starter
           results-dir: backend/allure-results
           ssh-host: ${{ secrets.SSH_HOST }}
           ssh-user: ${{ secrets.SSH_USER }}
           ssh-key: ${{ secrets.SSH_KEY }}
+          ssh-known-hosts: ${{ secrets.SSH_KNOWN_HOSTS }}
 
   deploy:
     needs: test
     runs-on: ubuntu-latest
+    # Les secrets passent par env: et ne sont jamais interpolés dans les scripts (24/09) :
+    # une valeur interpolée devient du code shell, une variable reste une donnée.
     steps:
       - uses: actions/checkout@v7
 
+      # Clés d'hôte du Pi lues dans le secret SSH_KNOWN_HOSTS (alias pi-gotyeah), plus de
+      # scan de clés au déploiement (24/09) : un scan croit la première clé venue, et
+      # des clés écrites en clair dans ce dépôt public mèneraient à l'IP du Pi via Censys
+      # ou Shodan. Sans le secret, on s'arrête plutôt que de se connecter à l'aveugle.
       - name: Préparer la clé SSH
+        env:
+          SSH_KEY: ${{ secrets.SSH_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
         run: |
+          if [ -z "$SSH_KNOWN_HOSTS" ]; then echo "::error::Secret SSH_KNOWN_HOSTS absent : sans lui, le déploiement accepterait n'importe quel hôte."; exit 1; fi
           mkdir -p ~/.ssh
-          printf '%s\n' "${{ secrets.SSH_KEY }}" > ~/.ssh/id_ed25519
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
-          ssh-keyscan -p 22 -H "${{ secrets.SSH_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts_pi
 
       - name: Synchroniser le code sur le Pi (le .env du Pi est préservé)
+        env:
+          SSH_USER: ${{ secrets.SSH_USER }}
+          SSH_HOST: ${{ secrets.SSH_HOST }}
         run: |
           rsync -az --delete \
             --exclude='.git' \
             --exclude='.env' \
             --exclude='__pycache__' \
             --rsync-path="mkdir -p ${REMOTE_DIR} && rsync" \
-            -e "ssh -i ~/.ssh/id_ed25519 -p 22 -o StrictHostKeyChecking=yes" \
-            ./ "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:${REMOTE_DIR}/"
+            -e "ssh -i ~/.ssh/id_ed25519 -p 22 -o HostKeyAlias=pi-gotyeah -o UserKnownHostsFile=~/.ssh/known_hosts_pi -o StrictHostKeyChecking=yes" \
+            ./ "$SSH_USER@$SSH_HOST:${REMOTE_DIR}/"
 
       - name: Construire et relancer le conteneur
+        env:
+          SSH_USER: ${{ secrets.SSH_USER }}
+          SSH_HOST: ${{ secrets.SSH_HOST }}
         run: |
-          ssh -i ~/.ssh/id_ed25519 -p 22 -o StrictHostKeyChecking=yes \
-            "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
+          ssh -i ~/.ssh/id_ed25519 -p 22 \
+            -o HostKeyAlias=pi-gotyeah -o UserKnownHostsFile=~/.ssh/known_hosts_pi -o StrictHostKeyChecking=yes \
+            "$SSH_USER@$SSH_HOST" \
             "set -e; cd ${REMOTE_DIR}; docker compose up -d --build --wait --wait-timeout 120; docker image prune -f"
