@@ -3,6 +3,9 @@ services:
     build: ./backend
     container_name: gotyeah-starter
     restart: unless-stopped
+    # Limite posée à la main sur le Pi le 28/08/2026 (pic mesuré le 24/09 : 71 Mio).
+    # Versionnée ici : le déploiement (rsync puis recréation du conteneur) l'a effacée.
+    mem_limit: 128m
     env_file: .env
     networks:
       - default
