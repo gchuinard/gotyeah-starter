@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="robots" content="noindex" />
+  <title>Page introuvable · gotyeah-starter</title>
+  <link rel="stylesheet" href="/static/style.css" />
+  <style>
+    /* style.css ne stylise que des <button> : on reprend le même bouton pour un lien. */
+    .card h2 { margin: 0 0 0.5rem; font-size: 1.05rem; }
+    .card p { margin: 0 0 1.25rem; color: var(--muted); }
+    .code { margin-bottom: 0.75rem; display: inline-block; color: var(--accent); border-color: var(--accent); }
+    a.btn {
+      display: block;
+      padding: 0.7rem;
+      background: var(--accent);
+      color: #fff;
+      border-radius: 8px;
+      font-size: 0.95rem;
+      font-weight: 600;
+      text-align: center;
+      text-decoration: none;
+    }
+    a.btn:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <header>
+      <h1>gotyeah-starter</h1>
+      <p class="sub">Provisionne un nouveau site</p>
+    </header>
+
+    <section class="card">
+      <span class="status code">404</span>
+      <h2>Page introuvable</h2>
+      <p>Cette adresse ne correspond à aucune page. Tout se passe sur l'écran principal :
+        le formulaire de provisionnement, les pré-requis et les logs en direct.</p>
+      <a class="btn" href="/">Retour au formulaire</a>
+    </section>
+  </main>
+</body>
+</html>

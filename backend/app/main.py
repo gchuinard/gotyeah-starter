@@ -6,9 +6,11 @@ import json
 import uuid
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi.exception_handlers import http_exception_handler
+from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from .config import settings
 from .events import bus
@@ -16,11 +18,30 @@ from .models import ProvisionRequest, ProvisionStarted
 from .orchestrator import Orchestrator
 
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
+NOT_FOUND_PAGE = (STATIC_DIR / "404.html").read_text(encoding="utf-8")
+
+# Préfixes qui gardent la 404 JSON de FastAPI : l'API (dont le flux SSE des jobs) et les
+# fichiers statiques.
+_JSON_PREFIXES = ("/api/", "/static/")
 
 app = FastAPI(title="gotyeah-starter", version="1.0.0")
 
 # Tâches en cours, gardées pour éviter qu'elles soient garbage-collectées.
 _tasks: dict[str, asyncio.Task] = {}
+
+
+@app.exception_handler(StarletteHTTPException)
+async def _http_exc(request: Request, exc: StarletteHTTPException) -> Response:
+    """Adresse inconnue ouverte dans un navigateur (Accept: text/html, GET/HEAD) → page 404
+    au style de l'app, code 404 conservé. Le reste garde la réponse JSON de FastAPI."""
+    if (
+        exc.status_code == 404
+        and request.method in ("GET", "HEAD")
+        and not request.url.path.startswith(_JSON_PREFIXES)
+        and "text/html" in request.headers.get("accept", "")
+    ):
+        return HTMLResponse(NOT_FOUND_PAGE, status_code=404)
+    return await http_exception_handler(request, exc)
 
 
 @app.get("/api/health")
