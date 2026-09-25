@@ -1,13 +1,24 @@
 name: Deploy to Pi
 
 # À chaque push sur main : tests (job "test") puis déploiement (job "deploy") si les
-# tests passent. Le runner GitHub synchronise le code sur le Pi via rsync/SSH, puis
-# (re)construit le conteneur. Le .env (secrets) reste sur le Pi — il est exclu du rsync.
+# tests passent.
+#
+# Depuis le 25/09/2026, la clé SSH_KEY est dédiée à ce dépôt. Sur le Pi, authorized_keys la
+# force sur « /usr/local/sbin/gotyeah-deploy starter » : le Pi met à jour sa copie git de ce
+# dépôt (/home/pi/deploiement/gotyeah-starter), puis lance deploy/pi-deploy.sh, qui recopie
+# le code dans le dossier du service (mêmes exclusions qu'avant, le .env du Pi reste en
+# place) et reconstruit le conteneur. Une clé volée ne peut plus que redéployer main.
+# Jusque-là, le runner envoyait lui-même le code par rsync puis lançait docker compose en
+# SSH, avec une clé sans restriction (root de fait sur le Pi).
+# La même clé sert à l'étape Allure du job test : le Pi délègue ses « mkdir -p » et
+# « rsync --server » vers /home/pi/allure/results au dépôt Allure, comme avant.
 #
 # Secrets requis (Settings > Secrets and variables > Actions) :
 #   SSH_HOST  hôte/IP du Pi joignable en SSH depuis Internet
 #   SSH_USER  utilisateur Linux sur le Pi (pi)
-#   SSH_KEY   clé PRIVÉE de déploiement (contenu complet, lignes BEGIN/END incluses)
+#   SSH_KEY   clé PRIVÉE dédiée à ce dépôt (contenu complet, lignes BEGIN/END incluses)
+#             Sa clé PUBLIQUE est dans ~/.ssh/authorized_keys de pi, précédée de
+#             restrict,command="/usr/local/sbin/gotyeah-deploy starter"
 #   SSH_KNOWN_HOSTS  clés d'hôte du Pi au format known_hosts, sous l'alias pi-gotyeah
 
 on:
@@ -18,9 +29,6 @@ on:
 concurrency:
   group: deploy-gotyeah-starter
   cancel-in-progress: true
-
-env:
-  REMOTE_DIR: /home/pi/sites/gotyeah-starter
 
 jobs:
   test:
@@ -60,7 +68,9 @@ jobs:
     # Les secrets passent par env: et ne sont jamais interpolés dans les scripts (24/09) :
     # une valeur interpolée devient du code shell, une variable reste une donnée.
     steps:
-      - uses: actions/checkout@v7
+      # Pas de checkout : le code ne part plus d'ici, le Pi le lit dans sa copie git. Le
+      # dossier du service (/home/pi/sites/gotyeah-starter, l'ancien REMOTE_DIR) est fixé
+      # dans deploy/pi-deploy.sh.
 
       # Clés d'hôte du Pi lues dans le secret SSH_KNOWN_HOSTS (alias pi-gotyeah), plus de
       # scan de clés au déploiement (24/09) : un scan croit la première clé venue, et
@@ -72,30 +82,25 @@ jobs:
           SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
         run: |
           if [ -z "$SSH_KNOWN_HOSTS" ]; then echo "::error::Secret SSH_KNOWN_HOSTS absent : sans lui, le déploiement accepterait n'importe quel hôte."; exit 1; fi
+          if [ -z "$SSH_KEY" ]; then echo "::error::Secret SSH_KEY absent."; exit 1; fi
           mkdir -p ~/.ssh
           printf '%s\n' "$SSH_KEY" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
           printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts_pi
 
-      - name: Synchroniser le code sur le Pi (le .env du Pi est préservé)
+      - name: Déployer sur le Pi
         env:
           SSH_USER: ${{ secrets.SSH_USER }}
           SSH_HOST: ${{ secrets.SSH_HOST }}
         run: |
-          rsync -az --delete \
-            --exclude='.git' \
-            --exclude='.env' \
-            --exclude='__pycache__' \
-            --rsync-path="mkdir -p ${REMOTE_DIR} && rsync" \
-            -e "ssh -i ~/.ssh/id_ed25519 -p 22 -o HostKeyAlias=pi-gotyeah -o UserKnownHostsFile=~/.ssh/known_hosts_pi -o StrictHostKeyChecking=yes" \
-            ./ "$SSH_USER@$SSH_HOST:${REMOTE_DIR}/"
-
-      - name: Construire et relancer le conteneur
-        env:
-          SSH_USER: ${{ secrets.SSH_USER }}
-          SSH_HOST: ${{ secrets.SSH_HOST }}
-        run: |
-          ssh -i ~/.ssh/id_ed25519 -p 22 \
+          for v in SSH_HOST SSH_USER; do
+            if [ -z "${!v}" ]; then echo "::error::Secret $v absent."; exit 1; fi
+          done
+          # La commande est lue par gotyeah-deploy sur le Pi, qui refuse toute autre forme : les
+          # étapes (rsync vers le dossier du service, docker compose up -d --build --wait,
+          # docker image prune) vivent dans deploy/pi-deploy.sh. Le Pi ne déploie ce commit,
+          # celui que le job test vient de valider, que s'il est encore main ; sinon il ne fait
+          # rien et le run du commit suivant déploie.
+          ssh -i ~/.ssh/id_ed25519 -p 22 -o IdentitiesOnly=yes \
             -o HostKeyAlias=pi-gotyeah -o UserKnownHostsFile=~/.ssh/known_hosts_pi -o StrictHostKeyChecking=yes \
-            "$SSH_USER@$SSH_HOST" \
-            "set -e; cd ${REMOTE_DIR}; docker compose up -d --build --wait --wait-timeout 120; docker image prune -f"
+            "$SSH_USER@$SSH_HOST" "deploy $GITHUB_SHA"
